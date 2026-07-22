@@ -108,7 +108,11 @@ def build_surgeons(votes, roster_df=None, weights=None) -> pd.DataFrame:
     rows = []
     for sid, g in v.groupby(key):
         disp = g["surgeon"].dropna().iloc[0] if g["surgeon"].notna().any() else str(sid)
-        seen = pd.unique(pd.concat([g["winner_case_id"], g["loser_case_id"]]).dropna())
+        seen_cols = [g["winner_case_id"], g["loser_case_id"]]
+        if "outcome" in g.columns:  # tie rows carry their pair in pair_a/pair_b, not winner/loser
+            tg = g[g["outcome"].astype(str).str.lower() == "tie"]
+            seen_cols += [tg["pair_a_id"], tg["pair_b_id"]]
+        seen = pd.unique(pd.concat(seen_cols).dropna())
         rows.append({
             "surgeon_id": sid,
             "display_name": disp,
@@ -127,7 +131,7 @@ def build_surgeons(votes, roster_df=None, weights=None) -> pd.DataFrame:
 
 def build_comparisons(votes) -> pd.DataFrame:
     """Tidy fact table: one row per judgement, with a stable ``comparison_id``."""
-    cols = ["timestamp", "surgeon_id", "surgeon", "session_id",
+    cols = ["timestamp", "surgeon_id", "surgeon", "session_id", "outcome",
             "winner_case_id", "loser_case_id", "pair_a_id", "pair_b_id"]
     if votes is None or len(votes) == 0:
         return pd.DataFrame(columns=["comparison_id", *cols])

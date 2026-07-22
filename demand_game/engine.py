@@ -36,8 +36,9 @@ VOTE_COLS = [
     "surgeon",          # display name of the rater (from the roster)
     "surgeon_id",       # stable roster id (sNNN) -- authoritative key for per-surgeon tracking
     "session_id",       # browser session (uuid)
-    "winner_case_id",   # case judged to have HIGHER osteogenic demand
-    "loser_case_id",    # the other case
+    "outcome",          # "pick" (a strict preference) or "tie" (too close to call)
+    "winner_case_id",   # case judged to have HIGHER osteogenic demand (blank for a tie)
+    "loser_case_id",    # the other case (blank for a tie)
     "pair_a_id",        # left card shown (audit)
     "pair_b_id",        # right card shown (audit)
 ]
@@ -164,10 +165,21 @@ def filter_pool_votes(votes: pd.DataFrame, pool_ids) -> pd.DataFrame:
     if votes is None or len(votes) == 0:
         return votes
     pool = {int(c) for c in pool_ids}
-    v = votes.dropna(subset=["winner_case_id", "loser_case_id"]).copy()
-    mask = (v["winner_case_id"].astype(int).isin(pool)
-            & v["loser_case_id"].astype(int).isin(pool))
-    return v[mask].reset_index(drop=True)
+    v = votes.copy()
+    has_outcome = "outcome" in v.columns
+    is_tie = ((v["outcome"].astype(str).str.lower() == "tie")
+              if has_outcome else pd.Series(False, index=v.index))
+
+    picks = v[~is_tie].dropna(subset=["winner_case_id", "loser_case_id"])
+    if len(picks):
+        picks = picks[picks["winner_case_id"].astype(int).isin(pool)
+                      & picks["loser_case_id"].astype(int).isin(pool)]
+    ties = v[is_tie].dropna(subset=["pair_a_id", "pair_b_id"]) if has_outcome else v.iloc[0:0]
+    if len(ties):
+        ties = ties[ties["pair_a_id"].astype(int).isin(pool)
+                    & ties["pair_b_id"].astype(int).isin(pool)]
+    out = pd.concat([picks, ties]) if len(ties) else picks
+    return out.reset_index(drop=True)
 
 
 # ================================================================================== elo ====
@@ -186,21 +198,33 @@ def elo_replay(votes: pd.DataFrame, case_ids, k: float = K_FACTOR, base: float =
     if votes is None or len(votes) == 0:
         return ratings, counts
 
-    v = votes.dropna(subset=["winner_case_id", "loser_case_id"])
+    v = votes.copy()
     if "timestamp" in v.columns:
         v = v.sort_values("timestamp", kind="stable")
+    has_outcome = "outcome" in v.columns
 
-    for w, l in zip(v["winner_case_id"].astype(int), v["loser_case_id"].astype(int)):
-        if w not in ratings:
-            ratings[w], counts[w] = base, 0
-        if l not in ratings:
-            ratings[l], counts[l] = base, 0
-        ra, rb = ratings[w], ratings[l]
-        ea = 1.0 / (1.0 + 10.0 ** ((rb - ra) / 400.0))  # expected win prob for winner
-        ratings[w] = ra + k * (1.0 - ea)
-        ratings[l] = rb + k * (0.0 - (1.0 - ea))
-        counts[w] += 1
-        counts[l] += 1
+    for row in v.itertuples(index=False):
+        tie = has_outcome and str(getattr(row, "outcome", "")).lower() == "tie"
+        if tie:  # a "too close to call" -> draw: both cases score 0.5
+            a, b = getattr(row, "pair_a_id"), getattr(row, "pair_b_id")
+            if pd.isna(a) or pd.isna(b):
+                continue
+            i, j, si = int(a), int(b), 0.5
+        else:
+            w, l = getattr(row, "winner_case_id"), getattr(row, "loser_case_id")
+            if pd.isna(w) or pd.isna(l):
+                continue
+            i, j, si = int(w), int(l), 1.0
+        if i not in ratings:
+            ratings[i], counts[i] = base, 0
+        if j not in ratings:
+            ratings[j], counts[j] = base, 0
+        ri, rj = ratings[i], ratings[j]
+        ei = 1.0 / (1.0 + 10.0 ** ((rj - ri) / 400.0))  # expected score for i
+        ratings[i] = ri + k * (si - ei)
+        ratings[j] = rj + k * ((1.0 - si) - (1.0 - ei))
+        counts[i] += 1
+        counts[j] += 1
 
     return ratings, counts
 

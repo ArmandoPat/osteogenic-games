@@ -343,9 +343,16 @@ def surgeon_progress(votes, surgeon_id, surgeon_name):
     mm = mine.dropna(subset=["winner_case_id", "loser_case_id"])
     pairs = {frozenset((int(w), int(l)))
              for w, l in zip(mm["winner_case_id"].astype(int), mm["loser_case_id"].astype(int))}
-    seen = (int(pd.unique(pd.concat([mm["winner_case_id"], mm["loser_case_id"]]).astype(int)).size)
-            if len(mm) else 0)
-    return int(len(mine)), seen, pairs
+    seen_ids = (set(pd.concat([mm["winner_case_id"], mm["loser_case_id"]]).astype(int))
+                if len(mm) else set())
+    # "too close to call" pairs also count as seen, so surgeons aren't shown them again
+    if "outcome" in mine.columns:
+        ties = mine[mine["outcome"].astype(str).str.lower() == "tie"].dropna(
+            subset=["pair_a_id", "pair_b_id"])
+        for a, b in zip(ties["pair_a_id"].astype(int), ties["pair_b_id"].astype(int)):
+            pairs.add(frozenset((a, b)))
+            seen_ids.update((a, b))
+    return int(len(mine)), len(seen_ids), pairs
 
 
 def record_vote(winner, loser, pair_a, pair_b):
@@ -356,8 +363,29 @@ def record_vote(winner, loser, pair_a, pair_b):
             "surgeon": st.session_state.surgeon,
             "surgeon_id": st.session_state.surgeon_id,
             "session_id": st.session_state.session_id,
+            "outcome": "pick",
             "winner_case_id": int(winner),
             "loser_case_id": int(loser),
+            "pair_a_id": int(pair_a),
+            "pair_b_id": int(pair_b),
+        },
+    )
+    st.session_state.my_votes += 1
+
+
+def record_tie(pair_a, pair_b):
+    """Record a "too close to call" judgement: the two cases are of equal osteogenic demand.
+    Stored with no winner/loser so the ladder can treat it as a draw."""
+    engine.append_vote(
+        VOTES_PATH,
+        {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "surgeon": st.session_state.surgeon,
+            "surgeon_id": st.session_state.surgeon_id,
+            "session_id": st.session_state.session_id,
+            "outcome": "tie",
+            "winner_case_id": None,
+            "loser_case_id": None,
             "pair_a_id": int(pair_a),
             "pair_b_id": int(pair_b),
         },
@@ -709,7 +737,7 @@ with compare_tab:
     st.markdown(
         "<div class='hint-row'>Use <span class='kbd'>&larr;</span> / "
         "<span class='kbd'>&rarr;</span> to choose &nbsp;·&nbsp; "
-        "<span class='kbd'>&darr;</span> to skip</div>",
+        "<span class='kbd'>&darr;</span> tie</div>",
         unsafe_allow_html=True,
     )
     inject_keyboard()
@@ -730,8 +758,13 @@ with compare_tab:
         st.rerun()
 
     if skip:
-        st.session_state.pair = new_pair(case_ids, ratings, counts, smart, seen_pairs=seen_pairs)
+        record_tie(id_a, id_b)
+        pairs_now = set(seen_pairs) | {frozenset((int(id_a), int(id_b)))}
+        st.session_state.pair = new_pair(case_ids, ratings, counts, smart, seen_pairs=pairs_now)
         st.session_state.streak_id, st.session_state.streak_count = None, 0
+        with contextlib.suppress(Exception):  # refresh model-ready exports on every judgement
+            exports.regenerate(OUT_DIR, engine.load_votes(VOTES_PATH), cases, case_ids, roster_df)
+        st.session_state.pending_toast = "\u2713 Tie recorded"
         st.rerun()
 
 # ------------------------------------------------------------------------------ INSIGHTS --

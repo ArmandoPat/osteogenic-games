@@ -10,46 +10,76 @@ from scipy import sparse
 from scipy.stats import spearmanr
 
 
-def bradley_terry(votes: pd.DataFrame, case_ids, C: float = 1.0) -> pd.DataFrame | None:
-    """L2-regularised Bradley-Terry latent strengths via logistic regression.
+def _bt_comparisons(votes, weights=None):
+    """Flatten a vote log into weighted (winner_case, loser_case, weight) comparison rows.
 
-    Each comparison contributes a design row ``e_winner - e_loser`` with label 1; the mirror
-    row ``e_loser - e_winner`` with label 0 supplies the second class. The (ridge) penalty keeps
-    the estimate stable even when the comparison graph is sparse or disconnected -- unlike a raw
-    MLE Bradley-Terry fit. Coefficients are the latent demand strengths (higher = more demand).
+    A **pick** is one row (winner beats loser) at the rater's weight. A **tie** ("too close to
+    call") is two half-weight rows -- each case "beats" the other -- which pulls the two latent
+    strengths together, the Bradley-Terry analogue of a draw.
+    """
+    v = votes.copy()
+    has_outcome = "outcome" in v.columns
+    is_tie = ((v["outcome"].astype(str).str.lower() == "tie")
+              if has_outcome else pd.Series(False, index=v.index))
 
-    Only cases that actually appear in the votes are estimated (others have no signal).
+    def _w(surg):
+        return float(weights.get(surg, 1.0)) if weights is not None else 1.0
+
+    picks = v[~is_tie].dropna(subset=["winner_case_id", "loser_case_id"])
+    ties = v[is_tie].dropna(subset=["pair_a_id", "pair_b_id"]) if has_outcome else v.iloc[0:0]
+
+    comps = []  # (winner_case, loser_case, weight)
+    p_surg = picks["surgeon"] if "surgeon" in picks.columns else pd.Series(index=picks.index, dtype=object)
+    for surg, w, l in zip(p_surg, picks["winner_case_id"].astype(int), picks["loser_case_id"].astype(int)):
+        comps.append((int(w), int(l), _w(surg)))
+    t_surg = ties["surgeon"] if "surgeon" in ties.columns else pd.Series(index=ties.index, dtype=object)
+    for surg, a, b in zip(t_surg, ties["pair_a_id"].astype(int), ties["pair_b_id"].astype(int)):
+        half = 0.5 * _w(surg)
+        comps.append((int(a), int(b), half))
+        comps.append((int(b), int(a), half))
+    return comps
+
+
+def _bt_fit(votes: pd.DataFrame, weights: dict | None = None, C: float = 1.0) -> pd.DataFrame | None:
+    """L2-regularised, draw-aware Bradley-Terry latent strengths via weighted logistic regression.
+
+    Each comparison contributes a design row ``e_winner - e_loser`` (label 1) plus its mirror
+    (label 0) so both logistic classes are present; per-row sample weights carry surgeon
+    reliability (and the 0.5 split for ties). The ridge penalty keeps the estimate stable on a
+    sparse / disconnected comparison graph. Only cases that actually appear are estimated.
     """
     from sklearn.linear_model import LogisticRegression
 
     if votes is None or len(votes) == 0:
         return None
-    v = votes.dropna(subset=["winner_case_id", "loser_case_id"])
-    if len(v) == 0:
+    comps = _bt_comparisons(votes, weights)
+    if not comps:
         return None
 
-    seen = pd.unique(pd.concat([v["winner_case_id"], v["loser_case_id"]]).astype(int))
-    seen = [int(c) for c in seen]
+    seen = sorted({c for (w, l, _) in comps for c in (w, l)})
     idx = {c: i for i, c in enumerate(seen)}
-    n_items = len(seen)
 
     rows, cols, data = [], [], []
-    for r, (w, l) in enumerate(zip(v["winner_case_id"].astype(int), v["loser_case_id"].astype(int))):
+    for r, (w, l, _wt) in enumerate(comps):
         rows += [r, r]
         cols += [idx[w], idx[l]]
         data += [1.0, -1.0]
-    X = sparse.csr_matrix((data, (rows, cols)), shape=(len(v), n_items))
+    X = sparse.csr_matrix((data, (rows, cols)), shape=(len(comps), len(seen)))
+    sw = np.array([wt for (_, _, wt) in comps], dtype=float)
 
-    # mirror to create both logistic classes
     X2 = sparse.vstack([X, -X], format="csr")
-    y2 = np.concatenate([np.ones(X.shape[0]), np.zeros(X.shape[0])])
+    y2 = np.concatenate([np.ones(len(comps)), np.zeros(len(comps))])
+    sw2 = np.concatenate([sw, sw])
 
     clf = LogisticRegression(fit_intercept=False, C=C, max_iter=2000)
-    clf.fit(X2, y2)
-    strengths = clf.coef_.ravel()
-
-    out = pd.DataFrame({"case_id": seen, "bt_strength": strengths})
+    clf.fit(X2, y2, sample_weight=sw2)
+    out = pd.DataFrame({"case_id": seen, "bt_strength": clf.coef_.ravel()})
     return out.sort_values("bt_strength", ascending=False).reset_index(drop=True)
+
+
+def bradley_terry(votes: pd.DataFrame, case_ids, C: float = 1.0) -> pd.DataFrame | None:
+    """Unweighted draw-aware Bradley-Terry latent strengths (higher = more demand)."""
+    return _bt_fit(votes, weights=None, C=C)
 
 
 def spearman_vs_truth(ratings_df: pd.DataFrame, cases_df: pd.DataFrame,
@@ -152,42 +182,8 @@ def surgeon_reliability(votes: pd.DataFrame, floor: float = 0.25) -> dict:
 
 def weighted_bradley_terry(votes: pd.DataFrame, case_ids, weights: dict | None = None,
                            C: float = 1.0) -> pd.DataFrame | None:
-    """Bradley-Terry latent strengths with per-comparison **sample weights** (surgeon
-    reliability), pooling everyone onto ONE shared, surgeon-normalised ladder.
-
-    Identical design to :func:`bradley_terry` but each comparison row (and its mirror) carries
-    its rater's weight, so low-agreement surgeons pull the estimate less. Falls back to unit
-    weights when ``weights`` is None or the surgeon column is absent.
+    """Draw-aware Bradley-Terry with per-comparison **sample weights** (surgeon reliability),
+    pooling everyone onto ONE shared, surgeon-normalised ladder. Ties are split into two
+    half-weight comparisons. Falls back to unit weights when ``weights`` is None.
     """
-    from sklearn.linear_model import LogisticRegression
-
-    if votes is None or len(votes) == 0:
-        return None
-    v = votes.dropna(subset=["winner_case_id", "loser_case_id"])
-    if len(v) == 0:
-        return None
-
-    seen = pd.unique(pd.concat([v["winner_case_id"], v["loser_case_id"]]).astype(int))
-    seen = [int(c) for c in seen]
-    idx = {c: i for i, c in enumerate(seen)}
-
-    rows, cols, data = [], [], []
-    for r, (w, l) in enumerate(zip(v["winner_case_id"].astype(int), v["loser_case_id"].astype(int))):
-        rows += [r, r]
-        cols += [idx[w], idx[l]]
-        data += [1.0, -1.0]
-    X = sparse.csr_matrix((data, (rows, cols)), shape=(len(v), len(seen)))
-
-    if weights is not None and "surgeon" in v.columns:
-        sw = v["surgeon"].map(lambda s: weights.get(s, 1.0)).to_numpy(dtype=float)
-    else:
-        sw = np.ones(len(v))
-
-    X2 = sparse.vstack([X, -X], format="csr")
-    y2 = np.concatenate([np.ones(X.shape[0]), np.zeros(X.shape[0])])
-    sw2 = np.concatenate([sw, sw])
-
-    clf = LogisticRegression(fit_intercept=False, C=C, max_iter=2000)
-    clf.fit(X2, y2, sample_weight=sw2)
-    out = pd.DataFrame({"case_id": seen, "bt_strength": clf.coef_.ravel()})
-    return out.sort_values("bt_strength", ascending=False).reset_index(drop=True)
+    return _bt_fit(votes, weights=weights, C=C)
