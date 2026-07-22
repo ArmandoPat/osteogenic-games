@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import hmac
+import html
 import mimetypes
 import os
 import time
@@ -383,6 +384,30 @@ def build_leaderboard(votes, roster_df=None) -> pd.DataFrame:
     return g.sort_values("comparisons", ascending=False).reset_index(drop=True)
 
 
+def standing_stat_html(votes, roster_df=None) -> str:
+    """Header stat card: the signed-in surgeon's leaderboard rank and gap to the top."""
+    if not st.session_state.get("surgeon"):
+        return ""
+    lb = build_leaderboard(votes, roster_df)
+    me = str(st.session_state.get("surgeon_id") or "")
+    pos = lb.index[lb["surgeon_id"].astype(str) == me] if len(lb) else []
+    if not len(pos):
+        return ""
+    r = int(pos[0])
+    top = int(lb.iloc[0]["comparisons"])
+    mine = int(lb.iloc[r]["comparisons"])
+    if r == 0:
+        lead = top - int(lb.iloc[1]["comparisons"]) if len(lb) > 1 else 0
+        value = "\U0001f947 #1"
+        label = f"{lead} ahead of 2nd" if lead else "leading the board"
+    else:
+        leader = str(lb.iloc[0]["surgeon"]) or str(lb.iloc[0]["surgeon_id"])
+        value = f"#{r + 1}"
+        label = f"{top - mine} behind {leader}"
+    return (f'<div class="hstat"><div class="v">{html.escape(value)}</div>'
+            f'<div class="l">{html.escape(label)}</div></div>')
+
+
 def record_vote(winner, loser, pair_a, pair_b):
     engine.append_vote(
         VOTES_PATH,
@@ -442,12 +467,13 @@ def advance_after_vote(winner, loser, case_ids, ratings, counts, smart, seen_pai
 
 
 # ------------------------------------------------------------------------------- chrome ---
-def render_header(my_comparisons, my_cases_seen, total_votes, rho, is_admin=False):
+def render_header(my_comparisons, my_cases_seen, total_votes, rho, is_admin=False, standing_html=""):
     brand = _brand_lockup(dark=True)
     stats = (f'<div class="hstat"><div class="v">{my_comparisons}</div>'
              f'<div class="l">Your comparisons</div></div>'
              f'<div class="hstat"><div class="v">{my_cases_seen}</div>'
              f'<div class="l">Cases seen</div></div>')
+    stats += standing_html
     if is_admin:  # collection totals + truth correlation stay on the owner view only
         rho_html = f"{rho:.2f}" if rho is not None else "&mdash;"
         stats += (f'<div class="hstat"><div class="v">{total_votes}</div>'
@@ -672,23 +698,6 @@ with st.sidebar:
         pc1, pc2 = st.columns(2)
         pc1.metric("Comparisons", my_comp)
         pc2.metric("Cases seen", f"{my_seen}/{len(case_ids)}")
-        _lb = build_leaderboard(votes, roster_df)
-        _me = str(st.session_state.get("surgeon_id") or "")
-        _pos = _lb.index[_lb["surgeon_id"].astype(str) == _me] if len(_lb) else []
-        if len(_pos):
-            _r = int(_pos[0])
-            _top = int(_lb.iloc[0]["comparisons"])
-            _mine = int(_lb.iloc[_r]["comparisons"])
-            if _r == 0:
-                _lead = _top - int(_lb.iloc[1]["comparisons"]) if len(_lb) > 1 else 0
-                st.caption(f"\U0001f947 You're #1 \u2014 {_lead} ahead of 2nd place!"
-                           if _lead else "\U0001f947 You're #1 on the board!")
-            else:
-                _leader = str(_lb.iloc[0]["surgeon"]) or str(_lb.iloc[0]["surgeon_id"])
-                _ahead = str(_lb.iloc[_r - 1]["surgeon"]) or str(_lb.iloc[_r - 1]["surgeon_id"])
-                _to_next = int(_lb.iloc[_r - 1]["comparisons"]) - _mine
-                st.caption(f"#{_r + 1} \u2014 {_top - _mine} behind leader {_leader}"
-                           + (f" ({_to_next} to pass {_ahead})" if _r > 1 and _to_next else ""))
         nxt = next((m for m in MILESTONES if m > my_comp), None)
         if nxt:
             st.progress(min(my_comp / nxt, 1.0), text=f"{my_comp} · next milestone {nxt}")
@@ -768,7 +777,8 @@ if st.session_state.pending_toast:
     st.toast(st.session_state.pending_toast)
     st.session_state.pending_toast = None
 
-render_header(my_comp, my_seen, len(votes), rho, is_admin)
+render_header(my_comp, my_seen, len(votes), rho, is_admin,
+              standing_html=standing_stat_html(votes, roster_df))
 
 if not st.session_state.surgeon:
     render_welcome(roster_df)
