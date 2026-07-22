@@ -359,6 +359,29 @@ def surgeon_progress(votes, surgeon_id, surgeon_name):
     return int(len(mine)), len(seen_ids), pairs
 
 
+def build_leaderboard(votes, roster_df=None) -> pd.DataFrame:
+    """Surgeons ranked by number of comparisons made (all judgements, ties included).
+    Returns columns ``surgeon_id``, ``surgeon``, ``comparisons`` sorted high -> low."""
+    cols = ["surgeon_id", "surgeon", "comparisons"]
+    if votes is None or len(votes) == 0:
+        return pd.DataFrame(columns=cols)
+    v = votes.copy()
+    if "surgeon_id" not in v.columns:
+        v["surgeon_id"] = pd.NA
+    if "surgeon" not in v.columns:
+        v["surgeon"] = pd.NA
+    has_id = v["surgeon_id"].notna() & (v["surgeon_id"].astype(str).str.strip() != "")
+    key = v["surgeon_id"].astype("object").where(has_id, v["surgeon"])
+    g = (v.groupby(key, dropna=False)
+         .agg(surgeon=("surgeon", lambda s: s.dropna().iloc[0] if s.notna().any() else ""),
+              comparisons=("timestamp", "size"))
+         .reset_index(names="surgeon_id"))
+    if roster_df is not None and len(roster_df):
+        name_map = dict(zip(roster_df["surgeon_id"], roster_df["display_name"]))
+        g["surgeon"] = g["surgeon_id"].map(name_map).fillna(g["surgeon"])
+    return g.sort_values("comparisons", ascending=False).reset_index(drop=True)
+
+
 def record_vote(winner, loser, pair_a, pair_b):
     engine.append_vote(
         VOTES_PATH,
@@ -659,6 +682,33 @@ with st.sidebar:
                        "Keep going or take a break; every answer is saved.")
     else:
         st.caption("Sign in to track your progress.")
+
+    st.markdown("##### \U0001f3c6 Leaderboard")
+    lb = build_leaderboard(votes, roster_df)
+    if len(lb) == 0:
+        st.caption("No comparisons yet \u2014 be the first on the board!")
+    else:
+        medals = {0: "\U0001f947", 1: "\U0001f948", 2: "\U0001f949"}
+        me_id = str(st.session_state.get("surgeon_id") or "")
+        me_name = str(st.session_state.get("surgeon") or "")
+        top = lb.head(10)
+        lines = []
+        for i, row in top.iterrows():
+            badge = medals.get(i, f"{i + 1}.")
+            name = str(row["surgeon"]) or str(row["surgeon_id"])
+            is_me = (me_id and str(row["surgeon_id"]) == me_id) or (me_name and name == me_name)
+            label = f"**{name} (you)**" if is_me else name
+            lines.append(f"{badge} {label} \u2014 {int(row['comparisons'])}")
+        st.markdown("<br>".join(lines), unsafe_allow_html=True)
+        # if the signed-in surgeon isn't in the top 10, show their standing too
+        shown = set(top["surgeon_id"].astype(str))
+        if me_id and me_id not in shown:
+            pos = lb.index[lb["surgeon_id"].astype(str) == me_id]
+            if len(pos):
+                r = int(pos[0])
+                st.caption(f"\u22ef {r + 1}. {me_name} (you) \u2014 "
+                           f"{int(lb.iloc[r]['comparisons'])}")
+
     if is_admin:  # dataset coverage + truth diagnostics are owner-only
         st.markdown("##### Dataset coverage")
         st.progress(min(n_seen / max(len(case_ids), 1), 1.0),
