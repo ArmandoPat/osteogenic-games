@@ -32,6 +32,7 @@ import case_display
 import engine
 import exports
 import roster
+import storage
 
 # --- deployment secrets bridge -------------------------------------------------------------
 # Streamlit Community Cloud has no persistent disk, so votes + roster are kept in a SQL database
@@ -283,6 +284,10 @@ def load_cases() -> pd.DataFrame:
 
 
 def _votes_sig():
+    # In DB mode the local CSV never changes, so key the cache on the live vote count instead;
+    # this makes progress + the ladder refresh as soon as any vote is written.
+    if storage.enabled():
+        return ("db", storage.row_count("votes"))
     p = Path(VOTES_PATH)
     return (p.stat().st_mtime, p.stat().st_size) if p.exists() else (0.0, 0)
 

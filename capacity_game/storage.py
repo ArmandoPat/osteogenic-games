@@ -98,3 +98,14 @@ def replace_table(name: str, df: pd.DataFrame, columns) -> None:
 def table_is_empty(name: str, columns) -> bool:
     """True when the table is missing or holds no rows (used to avoid clobbering live data)."""
     return len(load_table(name, columns)) == 0
+
+
+def row_count(name: str) -> int:
+    """Fast ``SELECT COUNT(*)`` for cache invalidation; 0 when the table does not exist yet."""
+    try:
+        from sqlalchemy import text
+        eng = _get_engine()
+        with eng.connect() as cx:
+            return int(cx.execute(text(f'SELECT COUNT(*) FROM "{_table(name)}"')).scalar() or 0)
+    except Exception:
+        return 0
