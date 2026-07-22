@@ -671,6 +671,23 @@ with st.sidebar:
         pc1, pc2 = st.columns(2)
         pc1.metric("Comparisons", my_comp)
         pc2.metric("Cases seen", f"{my_seen}/{len(case_ids)}")
+        _lb = build_leaderboard(votes, roster_df)
+        _me = str(st.session_state.get("surgeon_id") or "")
+        _pos = _lb.index[_lb["surgeon_id"].astype(str) == _me] if len(_lb) else []
+        if len(_pos):
+            _r = int(_pos[0])
+            _top = int(_lb.iloc[0]["comparisons"])
+            _mine = int(_lb.iloc[_r]["comparisons"])
+            if _r == 0:
+                _lead = _top - int(_lb.iloc[1]["comparisons"]) if len(_lb) > 1 else 0
+                st.caption(f"\U0001f947 You're #1 \u2014 {_lead} ahead of 2nd place!"
+                           if _lead else "\U0001f947 You're #1 on the board!")
+            else:
+                _leader = str(_lb.iloc[0]["surgeon"]) or str(_lb.iloc[0]["surgeon_id"])
+                _ahead = str(_lb.iloc[_r - 1]["surgeon"]) or str(_lb.iloc[_r - 1]["surgeon_id"])
+                _to_next = int(_lb.iloc[_r - 1]["comparisons"]) - _mine
+                st.caption(f"#{_r + 1} \u2014 {_top - _mine} behind leader {_leader}"
+                           + (f" ({_to_next} to pass {_ahead})" if _r > 1 and _to_next else ""))
         nxt = next((m for m in MILESTONES if m > my_comp), None)
         if nxt:
             st.progress(min(my_comp / nxt, 1.0), text=f"{my_comp} · next milestone {nxt}")
