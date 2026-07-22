@@ -1,0 +1,15 @@
+# Streamlit OWNER secret -- never commit
+.streamlit/secrets.toml
+
+# Surgeon roster holds sign-in PINs -- never commit
+outputs/capacity_game/roster.csv
+outputs/demand_game/roster.csv
+
+# Locally collected data (cloud uses the database instead)
+outputs/capacity_game/
+outputs/demand_game/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
