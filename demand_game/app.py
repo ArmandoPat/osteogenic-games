@@ -591,21 +591,57 @@ def _timeout_dialog():
         st.rerun()
 
 
-@st.fragment(run_every=15)
+@st.fragment(run_every=5)
 def _session_timer():
-    """Live sidebar countdown that also fires one full rerun at expiry, so the time-up
-    dialog appears even if the surgeon has stopped clicking."""
+    """Silent watchdog: fires one full rerun at expiry so the time-up dialog appears even if
+    the surgeon has stopped clicking. The visible countdown lives top-right (render_top_timer)."""
     left = _time_left_seconds()
-    if left is None:
+    if left is not None and left <= 0 and not st.session_state.get("_timeout_fired"):
+        st.session_state._timeout_fired = True
+        st.rerun()
+
+
+def render_top_timer():
+    """Pin a live, per-second countdown to the top-right of the app. The tick runs client-side
+    (every second) off a fixed deadline, so it stays smooth without server reruns."""
+    left = _time_left_seconds()
+    if left is None:  # not signed in -> remove any stale badge
+        components.html(
+            "<script>(function(){var p=window.parent,d=p.document;"
+            "if(p.__capTimerInt){clearInterval(p.__capTimerInt);p.__capTimerInt=null;}"
+            "var e=d.getElementById('cap-timer');if(e)e.remove();})();</script>",
+            height=0,
+        )
         return
-    if left <= 0:
-        st.caption("\u23f1 Time's up")
-        if not st.session_state.get("_timeout_fired"):
-            st.session_state._timeout_fired = True
-            st.rerun()
-        return
-    mins, secs = divmod(int(left), 60)
-    st.caption(f"\u23f1 Time remaining: **{mins}:{secs:02d}**")
+    deadline_ms = int((time.time() + max(left, 0)) * 1000)
+    components.html(
+        f"""
+<script>
+(function(){{
+  var p = window.parent, d = p.document;
+  var DEADLINE = {deadline_ms};
+  var el = d.getElementById('cap-timer');
+  if(!el){{ el = d.createElement('div'); el.id = 'cap-timer'; d.body.appendChild(el); }}
+  el.style.cssText = 'position:fixed;top:3.2rem;right:1rem;z-index:2147483000;'
+    + 'font-family:\"Segoe UI\",system-ui,sans-serif;font-weight:700;font-size:0.95rem;'
+    + 'color:#fff;padding:7px 14px;border-radius:999px;letter-spacing:.02em;'
+    + 'box-shadow:0 4px 14px rgba(16,35,58,.22);user-select:none;'
+    + 'display:flex;align-items:center;gap:6px;transition:background .3s;';
+  if(p.__capTimerInt){{ clearInterval(p.__capTimerInt); }}
+  function tick(){{
+    var ms = DEADLINE - Date.now(); if(ms < 0) ms = 0;
+    var s = Math.floor(ms/1000), m = Math.floor(s/60), ss = ('0'+(s%60)).slice(-2);
+    el.textContent = '\u23f1 ' + m + ':' + ss;
+    el.style.background = s > 300 ? '#1B0FC4' : (s > 60 ? '#B4690E' : '#B00020');
+    if(ms <= 0){{ clearInterval(p.__capTimerInt); p.__capTimerInt = null; }}
+  }}
+  tick();
+  p.__capTimerInt = setInterval(tick, 1000);
+}})();
+</script>
+""",
+        height=0,
+    )
 
 
 def render_welcome(roster_df):
@@ -861,6 +897,7 @@ if st.session_state.pending_toast:
 
 render_header(my_comp, my_seen, len(votes), rho, is_admin,
               standing_html=standing_stat_html(votes, roster_df))
+render_top_timer()
 
 if not st.session_state.surgeon:
     render_welcome(roster_df)
