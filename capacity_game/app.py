@@ -821,14 +821,18 @@ with compare_tab:
     left, mid, right = st.columns([10, 1, 10])
     with left:
         st.markdown(case_display.case_card_html(row_a._asdict(), "A"), unsafe_allow_html=True)
-        pick_a = st.button("◀  Higher capacity", key="pick_a", width="stretch", type="primary")        flag_a = st.button("\U0001f6a9 Unrealistic case", key="flag_a", width="stretch",
-                           help="Flag this patient as clinically unrealistic / not seen in practice.")    with mid:
+        pick_a = st.button("◀  Higher capacity", key="pick_a", width="stretch", type="primary")
+        flag_a = st.button("\U0001f6a9 Unrealistic case", key="flag_a", width="stretch",
+                           help="Flag this patient as clinically unrealistic / not seen in practice.")
+    with mid:
         st.markdown("<div class='vs-wrap'><div class='vs-badge'>VS</div></div>",
                     unsafe_allow_html=True)
     with right:
         st.markdown(case_display.case_card_html(row_b._asdict(), "B"), unsafe_allow_html=True)
-        pick_b = st.button("Higher capacity  ▶", key="pick_b", width="stretch", type="primary")        flag_b = st.button("\U0001f6a9 Unrealistic case", key="flag_b", width="stretch",
+        pick_b = st.button("Higher capacity  ▶", key="pick_b", width="stretch", type="primary")
+        flag_b = st.button("\U0001f6a9 Unrealistic case", key="flag_b", width="stretch",
                            help="Flag this patient as clinically unrealistic / not seen in practice.")
+
     s1, s2, s3 = st.columns([3, 2, 3])
     with s2:
         skip = st.button("Too close to call", key="skip", width="stretch")
