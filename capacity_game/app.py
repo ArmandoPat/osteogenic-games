@@ -601,8 +601,9 @@ def _session_timer():
 
 
 def render_top_timer():
-    """Pin a live, per-second countdown to the top-right of the app. The tick runs client-side
-    (every second) off a fixed deadline, so it stays smooth without server reruns."""
+    """Render a live, per-second countdown pill right beside the 'Your comparisons' stat in the
+    header. The tick runs client-side so it stays smooth without server reruns, and it re-attaches
+    itself after each Streamlit rerun (which rebuilds the header)."""
     left = _time_left_seconds()
     if left is None:  # not signed in -> remove any stale badge
         components.html(
@@ -619,15 +620,24 @@ def render_top_timer():
 (function(){{
   var p = window.parent, d = p.document;
   var DEADLINE = {deadline_ms};
-  var el = d.getElementById('cap-timer');
-  if(!el){{ el = d.createElement('div'); el.id = 'cap-timer'; d.body.appendChild(el); }}
-  el.style.cssText = 'position:fixed;top:3.2rem;right:12%;z-index:2147483000;'
-    + 'font-family:\"Segoe UI\",system-ui,sans-serif;font-weight:700;font-size:0.95rem;'
-    + 'color:#fff;padding:7px 14px;border-radius:999px;letter-spacing:.02em;'
-    + 'box-shadow:0 4px 14px rgba(16,35,58,.22);user-select:none;'
-    + 'display:flex;align-items:center;gap:6px;transition:background .3s;';
+  var STYLE = 'display:flex;align-items:center;gap:6px;color:#fff;font-weight:700;'
+    + 'font-size:16px;padding:7px 14px;border-radius:999px;letter-spacing:.02em;'
+    + 'box-shadow:0 3px 10px rgba(16,35,58,.20);white-space:nowrap;'
+    + 'font-family:\"Segoe UI\",system-ui,sans-serif;';
+  function ensure(){{
+    var host = d.querySelector('.header-right');
+    if(!host) return null;
+    var el = d.getElementById('cap-timer');
+    if(!el || el.parentNode !== host){{
+      if(el) el.remove();
+      el = d.createElement('div'); el.id = 'cap-timer'; el.style.cssText = STYLE;
+      host.insertBefore(el, host.firstChild);
+    }}
+    return el;
+  }}
   if(p.__capTimerInt){{ clearInterval(p.__capTimerInt); }}
   function tick(){{
+    var el = ensure(); if(!el) return;
     var ms = DEADLINE - Date.now(); if(ms < 0) ms = 0;
     var s = Math.floor(ms/1000), m = Math.floor(s/60), ss = ('0'+(s%60)).slice(-2);
     el.textContent = '\u23f1 ' + m + ':' + ss;
