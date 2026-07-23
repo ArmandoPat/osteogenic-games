@@ -60,6 +60,7 @@ OUT_DIR = Path(os.environ.get("DEMAND_DATA_DIR")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 VOTES_PATH = engine.votes_path(OUT_DIR)
 ROSTER_PATH = roster.roster_path(OUT_DIR)
+FLAGS_PATH = engine.flags_path(OUT_DIR)
 ASSETS = Path(__file__).resolve().parent / "assets"
 _LOGO_FILES = ("medtronic_logo.svg", "medtronic_logo.png", "medtronic-logo.png",
                "medtronic.svg", "medtronic.png", "logo.svg", "logo.png")
@@ -446,6 +447,22 @@ def record_tie(pair_a, pair_b):
     st.session_state.my_votes += 1
 
 
+def record_flag(case_id, reason="unrealistic"):
+    """Record that the signed-in surgeon judged a case clinically unrealistic / not seen in
+    practice -- a face-validity signal on the synthetic cases (not counted as a comparison)."""
+    engine.append_flag(
+        FLAGS_PATH,
+        {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "surgeon": st.session_state.surgeon,
+            "surgeon_id": st.session_state.surgeon_id,
+            "session_id": st.session_state.session_id,
+            "case_id": int(case_id),
+            "reason": reason,
+        },
+    )
+
+
 def advance_after_vote(winner, loser, case_ids, ratings, counts, smart, seen_pairs=None):
     """Winner-stays / loser-replaced, with champion retirement after a win streak."""
     a, b = st.session_state.pair
@@ -806,12 +823,16 @@ with compare_tab:
     with left:
         st.markdown(case_display.case_card_html(row_a._asdict(), "A"), unsafe_allow_html=True)
         pick_a = st.button("◀  Higher demand", key="pick_a", width="stretch", type="primary")
+        flag_a = st.button("\U0001f6a9 Unrealistic case", key="flag_a", width="stretch",
+                           help="Flag this patient as clinically unrealistic / not seen in practice.")
     with mid:
         st.markdown("<div class='vs-wrap'><div class='vs-badge'>VS</div></div>",
                     unsafe_allow_html=True)
     with right:
         st.markdown(case_display.case_card_html(row_b._asdict(), "B"), unsafe_allow_html=True)
         pick_b = st.button("Higher demand  ▶", key="pick_b", width="stretch", type="primary")
+        flag_b = st.button("\U0001f6a9 Unrealistic case", key="flag_b", width="stretch",
+                           help="Flag this patient as clinically unrealistic / not seen in practice.")
 
     s1, s2, s3 = st.columns([3, 2, 3])
     with s2:
@@ -849,6 +870,17 @@ with compare_tab:
         st.session_state.pending_toast = "\u2713 Tie recorded"
         st.rerun()
 
+    if flag_a or flag_b:
+        flagged = int(id_a) if flag_a else int(id_b)
+        kept = int(id_b) if flag_a else int(id_a)
+        record_flag(flagged)
+        _, challenger = new_pair(case_ids, ratings, counts, smart,
+                                 exclude_champion=kept, seen_pairs=seen_pairs)
+        st.session_state.pair = (challenger, kept) if flag_a else (kept, challenger)
+        st.session_state.streak_id, st.session_state.streak_count = None, 0
+        st.session_state.pending_toast = "\U0001f6a9 Flagged \u2014 new case loaded"
+        st.rerun()
+
 # ------------------------------------------------------------------------------ INSIGHTS --
 with insights_tab:
     if not is_admin:
@@ -868,6 +900,26 @@ with insights_tab:
         c4.metric("Surgeon agreement",
                   f"{agree[0]*100:.0f}%" if agree else "n/a",
                   help=None if agree else "Needs pairs judged by 2+ surgeons.")
+
+        flags = engine.load_flags(FLAGS_PATH)
+        st.markdown("<div class='sec-title'>Realism flags</div>", unsafe_allow_html=True)
+        if len(flags) == 0:
+            st.caption("No cases have been flagged as clinically unrealistic yet.")
+        else:
+            fl = flags.dropna(subset=["case_id"]).copy()
+            fl["case_id"] = fl["case_id"].astype(int)
+            summ = (fl.groupby("case_id")
+                      .agg(times_flagged=("case_id", "size"), surgeons=("surgeon_id", "nunique"))
+                      .reset_index()
+                      .sort_values(["times_flagged", "case_id"], ascending=[False, True]))
+            summ["patient"] = summ["case_id"].map(
+                lambda cid: case_display.short_summary(id_to_row[int(cid)]._asdict())
+                if int(cid) in id_to_row else f"case {cid}")
+            fc1, fc2 = st.columns(2)
+            fc1.metric("Flagged cases", int(summ["case_id"].nunique()))
+            fc2.metric("Total flags", int(len(fl)))
+            st.dataframe(summ[["case_id", "patient", "times_flagged", "surgeons"]],
+                         hide_index=True, width="stretch")
 
         merged = buckets_df.merge(cases, on="case_id", how="left")
         merged["patient"] = merged.apply(lambda r: case_display.short_summary(r), axis=1)

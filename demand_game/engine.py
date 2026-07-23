@@ -45,6 +45,16 @@ VOTE_COLS = [
 
 _ID_COLS = ("winner_case_id", "loser_case_id", "pair_a_id", "pair_b_id")
 
+# --- flags.csv schema: cases a surgeon marks as clinically unrealistic (face-validity) ----
+FLAG_COLS = [
+    "timestamp",    # ISO-8601 UTC
+    "surgeon",      # display name of the rater
+    "surgeon_id",   # stable roster id (sNNN)
+    "session_id",   # browser session (uuid)
+    "case_id",      # the case flagged as unrealistic / not seen in the real world
+    "reason",       # free-text / tag (default "unrealistic")
+]
+
 # Historical schema (pre-``surgeon_id``); used to migrate old logs in place.
 _LEGACY_VOTE_COLS = [
     "timestamp", "surgeon", "session_id",
@@ -59,6 +69,10 @@ _APPEND_LOCK = threading.Lock()
 # ============================================================================ persistence ==
 def votes_path(out_dir) -> Path:
     return Path(out_dir) / "votes.csv"
+
+
+def flags_path(out_dir) -> Path:
+    return Path(out_dir) / "flags.csv"
 
 
 def _ensure_schema(path) -> None:
@@ -126,6 +140,40 @@ def append_vote(path, row: dict) -> None:
         _ensure_schema(path)
         write_header = not path.exists() or path.stat().st_size == 0
         pd.DataFrame([{c: row.get(c) for c in VOTE_COLS}], columns=VOTE_COLS).to_csv(
+            path, mode="a", header=write_header, index=False
+        )
+
+
+def load_flags(path) -> pd.DataFrame:
+    """Read the realism-flag log (cases marked clinically unrealistic). Storage-backed in
+    deployment; local CSV otherwise; empty typed frame when nothing has been flagged yet."""
+    if storage is not None and storage.enabled():
+        df = storage.load_table("flags", FLAG_COLS)
+    else:
+        path = Path(path)
+        if path.exists() and path.stat().st_size > 0:
+            df = pd.read_csv(path)
+            for c in FLAG_COLS:
+                if c not in df.columns:
+                    df[c] = pd.NA
+            df = df[FLAG_COLS]
+        else:
+            return pd.DataFrame(columns=FLAG_COLS)
+    if "case_id" in df.columns:
+        df["case_id"] = pd.to_numeric(df["case_id"], errors="coerce").astype("Int64")
+    return df
+
+
+def append_flag(path, row: dict) -> None:
+    """Append one realism-flag row. Storage-backed in deployment; local CSV otherwise."""
+    if storage is not None and storage.enabled():
+        storage.append_row("flags", row, FLAG_COLS)
+        return
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _APPEND_LOCK:
+        write_header = not path.exists() or path.stat().st_size == 0
+        pd.DataFrame([{c: row.get(c) for c in FLAG_COLS}], columns=FLAG_COLS).to_csv(
             path, mode="a", header=write_header, index=False
         )
 
