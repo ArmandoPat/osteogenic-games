@@ -109,6 +109,7 @@ STREAK_RETIRE = 6      # after N straight case-wins, retire the champion and dra
 POOL_SIZE = 200        # reduced, fixed comparison pool so full coverage is realistic
 POOL_SEED = 42
 SESSION_MINUTES = 5    # gentle "great batch" nudge after ~this long (configurable in owner mode)
+TIME_LIMIT_MINUTES = 20  # hard session cap; the countdown starts when the surgeon clicks Start
 MILESTONES = [10, 25, 50, 75, 100, 150, 200, 300, 400, 500]  # celebrate every N lifetime comparisons
 
 st.set_page_config(
@@ -564,6 +565,48 @@ def render_roster_admin():
                         st.rerun()
 
 
+def _time_left_seconds():
+    """Seconds left in the signed-in surgeon's timed session (None when not signed in)."""
+    started = st.session_state.get("session_started_at")
+    if not started:
+        return None
+    return TIME_LIMIT_MINUTES * 60 - (time.time() - started)
+
+
+@st.dialog("\u23f0 Your time is up")
+def _timeout_dialog():
+    """Blocking end-of-session modal; the only way forward is back to the sign-in page."""
+    st.markdown(
+        f"Your **{TIME_LIMIT_MINUTES}-minute** session has ended. Thank you \u2014 every "
+        "comparison you made has been saved.\n\nYou can now return to the sign-in page."
+    )
+    if st.button("Return to sign-in", type="primary", width="stretch"):
+        st.session_state.surgeon = ""
+        st.session_state.surgeon_id = ""
+        st.session_state.session_started_at = None
+        st.session_state.my_votes = 0
+        st.session_state.pair = None
+        st.session_state._timeout_fired = False
+        st.rerun()
+
+
+@st.fragment(run_every=15)
+def _session_timer():
+    """Live sidebar countdown that also fires one full rerun at expiry, so the time-up
+    dialog appears even if the surgeon has stopped clicking."""
+    left = _time_left_seconds()
+    if left is None:
+        return
+    if left <= 0:
+        st.caption("\u23f1 Time's up")
+        if not st.session_state.get("_timeout_fired"):
+            st.session_state._timeout_fired = True
+            st.rerun()
+        return
+    mins, secs = divmod(int(left), 60)
+    st.caption(f"\u23f1 Time remaining: **{mins}:{secs:02d}**")
+
+
 def render_welcome(roster_df):
     hero_logo = (f"<span class='hero-badge'><img src='{LOGO_URI}' class='hero-logo' alt='Medtronic'/>"
                  f"</span>" if LOGO_URI else "")
@@ -588,6 +631,14 @@ def render_welcome(roster_df):
         unsafe_allow_html=True,
     )
     st.write("")
+    st.info(
+        f"**\u23f1 {TIME_LIMIT_MINUTES}-minute session.** Your timer starts the moment you click "
+        "**Start**. When it ends, a message appears and you return to this sign-in page \u2014 "
+        "all of your answers are saved automatically.\n\n"
+        "**\U0001f6a9 Spot an unrealistic patient?** Beneath either profile you can tap "
+        "**\u201cUnrealistic case\u201d** if it wouldn't be seen in practice. Flagging never counts "
+        "as a comparison \u2014 it simply helps us check the synthetic cases."
+    )
     st.markdown("<div class='sec-title'>Sign in to begin</div>", unsafe_allow_html=True)
     active = roster.active_surgeons(roster_df)
     if len(active) == 0:
@@ -614,6 +665,7 @@ def render_welcome(roster_df):
                 st.session_state.surgeon = pick
                 st.session_state.surgeon_id = str(sid)
                 st.session_state.session_started_at = time.time()
+                st.session_state._timeout_fired = False
                 st.session_state.my_votes = 0
                 st.session_state.pair = None
                 st.rerun()
@@ -672,6 +724,7 @@ st.session_state.setdefault("session_id", uuid.uuid4().hex[:12])
 st.session_state.setdefault("surgeon", "")
 st.session_state.setdefault("surgeon_id", "")
 st.session_state.setdefault("session_started_at", None)
+st.session_state.setdefault("_timeout_fired", False)
 st.session_state.setdefault("pair", None)
 st.session_state.setdefault("streak_id", None)
 st.session_state.setdefault("streak_count", 0)
@@ -691,6 +744,7 @@ with st.sidebar:
             st.session_state.surgeon = ""
             st.session_state.surgeon_id = ""
             st.session_state.session_started_at = None
+            st.session_state._timeout_fired = False
             st.session_state.my_votes = 0
             st.session_state.pair = None
             st.rerun()
@@ -733,6 +787,7 @@ with st.sidebar:
         if started and (time.time() - started) >= SESSION_MINUTES * 60:
             st.caption(f"You've been going ~{SESSION_MINUTES}+ min — a great batch. "
                        "Keep going or take a break; every answer is saved.")
+        _session_timer()
     else:
         st.caption("Sign in to track your progress.")
 
@@ -808,6 +863,12 @@ render_header(my_comp, my_seen, len(votes), rho, is_admin,
 
 if not st.session_state.surgeon:
     render_welcome(roster_df)
+    st.stop()
+
+# Hard session cap: once the countdown hits zero the only path forward is back to sign-in.
+_left = _time_left_seconds()
+if _left is not None and _left <= 0:
+    _timeout_dialog()
     st.stop()
 
 if is_admin:
