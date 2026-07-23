@@ -208,6 +208,16 @@ html, body, .stApp, [class*="css"]{ font-family:'Inter',-apple-system,BlinkMacSy
   box-shadow:0 9px 24px rgba(109,40,217,.24) !important; }
 .st-key-pick_a button p, .st-key-pick_b button p{ color:var(--mdt-royal) !important; font-weight:700 !important; }
 
+/* Unrealistic-case flag buttons: small, subtle text link */
+.st-key-flag_a button, .st-key-flag_b button{
+  border:none !important; background:transparent !important; box-shadow:none !important;
+  padding:1px 6px !important; min-height:0 !important; height:auto !important; margin:2px auto 0 !important; }
+.st-key-flag_a button:hover, .st-key-flag_b button:hover{
+  transform:none !important; background:transparent !important; box-shadow:none !important; }
+.st-key-flag_a button p, .st-key-flag_b button p{
+  font-size:.72rem !important; line-height:1.1 !important; color:#98A2B3 !important; font-weight:500 !important; }
+.st-key-flag_a button:hover p, .st-key-flag_b button:hover p{ color:#D23B3B !important; }
+
 .pcard{ background:linear-gradient(180deg,#F7F1FE 0%,#FFFFFF 132px); border:1px solid var(--line);
   border-radius:18px; padding:18px 20px 20px; min-height:410px; box-shadow:0 4px 18px rgba(16,35,58,.06);
   position:relative; overflow:hidden; transition:box-shadow .18s,transform .18s,border-color .18s; }
@@ -823,7 +833,7 @@ with compare_tab:
     with left:
         st.markdown(case_display.case_card_html(row_a._asdict(), "A"), unsafe_allow_html=True)
         pick_a = st.button("◀  Higher demand", key="pick_a", width="stretch", type="primary")
-        flag_a = st.button("\U0001f6a9 Unrealistic case", key="flag_a", width="stretch",
+        flag_a = st.button("\U0001f6a9 Unrealistic case", key="flag_a", width="content",
                            help="Flag this patient as clinically unrealistic / not seen in practice.")
     with mid:
         st.markdown("<div class='vs-wrap'><div class='vs-badge'>VS</div></div>",
@@ -831,7 +841,7 @@ with compare_tab:
     with right:
         st.markdown(case_display.case_card_html(row_b._asdict(), "B"), unsafe_allow_html=True)
         pick_b = st.button("Higher demand  ▶", key="pick_b", width="stretch", type="primary")
-        flag_b = st.button("\U0001f6a9 Unrealistic case", key="flag_b", width="stretch",
+        flag_b = st.button("\U0001f6a9 Unrealistic case", key="flag_b", width="content",
                            help="Flag this patient as clinically unrealistic / not seen in practice.")
 
     s1, s2, s3 = st.columns([3, 2, 3])
