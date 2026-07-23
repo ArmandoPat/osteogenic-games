@@ -622,7 +622,7 @@ def render_top_timer():
   var DEADLINE = {deadline_ms};
   var el = d.getElementById('cap-timer');
   if(!el){{ el = d.createElement('div'); el.id = 'cap-timer'; d.body.appendChild(el); }}
-  el.style.cssText = 'position:fixed;top:3.2rem;left:50%;transform:translateX(-50%);z-index:2147483000;'
+  el.style.cssText = 'position:fixed;top:3.2rem;right:12%;z-index:2147483000;'
     + 'font-family:\"Segoe UI\",system-ui,sans-serif;font-weight:700;font-size:0.95rem;'
     + 'color:#fff;padding:7px 14px;border-radius:999px;letter-spacing:.02em;'
     + 'box-shadow:0 4px 14px rgba(16,35,58,.22);user-select:none;'
