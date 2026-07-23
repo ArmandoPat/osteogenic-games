@@ -622,7 +622,7 @@ def render_top_timer():
   var DEADLINE = {deadline_ms};
   var el = d.getElementById('cap-timer');
   if(!el){{ el = d.createElement('div'); el.id = 'cap-timer'; d.body.appendChild(el); }}
-  el.style.cssText = 'position:fixed;top:3.2rem;right:1rem;z-index:2147483000;'
+  el.style.cssText = 'position:fixed;top:3.2rem;left:50%;transform:translateX(-50%);z-index:2147483000;'
     + 'font-family:\"Segoe UI\",system-ui,sans-serif;font-weight:700;font-size:0.95rem;'
     + 'color:#fff;padding:7px 14px;border-radius:999px;letter-spacing:.02em;'
     + 'box-shadow:0 4px 14px rgba(16,35,58,.22);user-select:none;'
@@ -632,7 +632,7 @@ def render_top_timer():
     var ms = DEADLINE - Date.now(); if(ms < 0) ms = 0;
     var s = Math.floor(ms/1000), m = Math.floor(s/60), ss = ('0'+(s%60)).slice(-2);
     el.textContent = '\u23f1 ' + m + ':' + ss;
-    el.style.background = s > 300 ? '#1B0FC4' : (s > 60 ? '#B4690E' : '#B00020');
+    el.style.background = s > 600 ? '#1E8E3E' : (s > 300 ? '#E0A400' : '#C5221F');
     if(ms <= 0){{ clearInterval(p.__capTimerInt); p.__capTimerInt = null; }}
   }}
   tick();
